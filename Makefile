@@ -16,5 +16,8 @@ sim: $(SRC)/sim.cpp $(SRC)/shared/ipc_layout.h
 robot: $(SRC)/robot.cpp $(SRC)/shared/ipc_layout.h
 	$(CXX) $(CXXFLAGS) -o $@ $(SRC)/robot.cpp $(LDFLAGS)
 
+test-mazIO: tests/mazio_test.c src/lib/mazIO/maze.c src/lib/mazIO/stack.c src/lib/mazIO/queue.c
+	gcc -std=c11 -Wall -I$(SRC) -o $@ tests/mazio_test.c src/lib/mazIO/maze.c src/lib/mazIO/stack.c src/lib/mazIO/queue.c
+
 clean:
-	rm -f main sim robot
+	rm -f main sim robot test
