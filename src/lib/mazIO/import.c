@@ -50,16 +50,13 @@ struct maze *unpack_maz(struct packed_chunk *chunk) {
 // read it, write the length out, close the file.
 void read_data(FILE *f, struct packed_chunk *chunk) {
     // Figure out the length:
-    switch (chunk->packing_method) {
-        case PM_Packed:
-            // Same ol' ceil division trick.
-            chunk->len = (chunk->width * chunk->height + 1) / 2;
-            break;
-        case PM_Unpacked:
-            chunk->len = (chunk->width * chunk->height);
-            break;
-        default:
-            break;
+    if (chunk->packing_method == PM_Packed) {
+        // Same ol' ceil division trick.
+        chunk->len = (chunk->width * chunk->height + 1) / 2;
+    } else if (chunk->packing_method == PM_Unpacked) {
+        chunk->len = (chunk->width * chunk->height);
+    } else {
+        chunk->len = 0;
     }
     uint8_t *data = malloc(chunk->len * sizeof(uint8_t));
     fread(data, sizeof(uint8_t), chunk->len, f);
@@ -73,8 +70,8 @@ struct maze *read_maz(const char *filename) {
     // Alloc buffer for header
     uint8_t *header = malloc(33);
 
-    // Open file
-    FILE *f = fopen(filename, "r");
+    // Open file (binary)
+    FILE *f = fopen(filename, "rb");
     if (f == NULL) {
         free(header);
         return NULL;
@@ -84,9 +81,9 @@ struct maze *read_maz(const char *filename) {
     fread(header, sizeof(uint8_t), 33, f);
 
     // Make sure this is a .MAZ file
-    bool header_matches = (strncmp((char *) header, MAZ_HEADER, 8) == 0);
-    if (!header_matches) {
+    if (memcmp(header, MAZ_HEADER, 8) != 0) {
         free(header);
+        fclose(f);
         return NULL;
     }
 
