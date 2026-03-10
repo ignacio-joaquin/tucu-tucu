@@ -15,7 +15,7 @@ Tucu tucu is a Micromouse inspired simulator.
 
 ## Milestones
 
-### M0 — IPC skeleton
+### M0 — IPC skeleton DONE
 - CMake root with `BUILD_TARGET=SIM|ESP32` switch
 - `shared/ipc_layout.h` and `shared/driver_iface.h` finalized — these never change after this milestone
 - Simulator opens shared memory block, writes dummy sensor values
