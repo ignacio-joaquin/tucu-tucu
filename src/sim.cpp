@@ -6,6 +6,11 @@
 #include <sys/wait.h>
 #include <cmath>
 #include <chrono> // For time measurement
+#include <cstdlib>
+
+extern "C" {
+#include "lib/mazIO/maze.h"
+}
 
 struct position
 {
@@ -14,7 +19,96 @@ struct position
     float heading_deg;
 };
 
-void calculate_position(const MotorCmd& cmd, position& pos, float dt) {
+static void print_maze(const maze_t *m) {
+    int w = m->width;
+    int h = m->height;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            int cell = m->data[y * w + x];
+            char bottom = (cell & S) ? ' ' : '_';
+            char right = (cell & E) ? ' ' : '|';
+            putchar(bottom);
+            putchar(right);
+        }
+        putchar('\n');
+    }
+}
+
+static bool can_transition(const maze_t *m, int ox, int oy, int nx, int ny) {
+    if (ox < 0 || ox >= m->width || oy < 0 || oy >= m->height) return false;
+    if (nx < 0 || nx >= m->width || ny < 0 || ny >= m->height) return false;
+
+    int cell = m->data[oy * m->width + ox];
+    int next = m->data[ny * m->width + nx];
+
+    if (nx == ox + 1 && ny == oy) {
+        // moving east
+        return (cell & E) && (next & W);
+    }
+    if (nx == ox - 1 && ny == oy) {
+        // moving west
+        return (cell & W) && (next & E);
+    }
+    if (nx == ox && ny == oy + 1) {
+        // moving south
+        return (cell & S) && (next & N);
+    }
+    if (nx == ox && ny == oy - 1) {
+        // moving north
+        return (cell & N) && (next & S);
+    }
+    return false;
+}
+
+static void move_in_maze(const maze_t *m, position &pos, float dx, float dy) {
+    constexpr float cell_size = 0.18f; // 18cm standard Micromouse cell
+    constexpr float eps = 1e-3f;
+
+    auto to_cell = [&](float v) {
+        int c = (int)floor(v / cell_size);
+        return c;
+    };
+
+    float nx = pos.x + dx;
+    float ny = pos.y + dy;
+
+    int cx = to_cell(pos.x);
+    int cy = to_cell(pos.y);
+    int tx = to_cell(nx);
+    int ty = to_cell(ny);
+
+    // Move in X direction first
+    if (tx != cx) {
+        int aimx = tx;
+        if (can_transition(m, cx, cy, aimx, cy)) {
+            pos.x = nx;
+        } else {
+            // clamp to boundary
+            float boundary = (aimx > cx) ? (cx + 1) * cell_size - eps : (cx) * cell_size + eps;
+            pos.x = boundary;
+        }
+    } else {
+        pos.x = nx;
+    }
+
+    // Recompute current cell after X move
+    cx = to_cell(pos.x);
+
+    // Move in Y direction
+    if (ty != cy) {
+        int aimy = ty;
+        if (can_transition(m, cx, cy, cx, aimy)) {
+            pos.y = ny;
+        } else {
+            float boundary = (aimy > cy) ? (cy + 1) * cell_size - eps : (cy) * cell_size + eps;
+            pos.y = boundary;
+        }
+    } else {
+        pos.y = ny;
+    }
+}
+
+void calculate_position(const MotorCmd& cmd, position& pos, float dt, const maze_t *maze) {
     constexpr float scale = 0.1f;
     constexpr float wheel_base = 0.5f; // distance between wheels (meters)
 
@@ -27,15 +121,17 @@ void calculate_position(const MotorCmd& cmd, position& pos, float dt) {
     const float PI = 3.14f;
     float heading_rad = pos.heading_deg * PI / 180.0f;
 
-    // Integrate heading and position
+    // Integrate heading
     heading_rad += angular * dt;
-    pos.x += linear * cosf(heading_rad) * dt;
-    pos.y += linear * sinf(heading_rad) * dt;
-
     pos.heading_deg = heading_rad * 180.0f / PI;
     // normalize heading to [0,360)
     while (pos.heading_deg >= 360.0f) pos.heading_deg -= 360.0f;
     while (pos.heading_deg < 0.0f) pos.heading_deg += 360.0f;
+
+    // Move with wall collisions
+    float dx = linear * cosf(heading_rad) * dt;
+    float dy = linear * sinf(heading_rad) * dt;
+    move_in_maze(maze, pos, dx, dy);
 }
 
 int main() {
@@ -50,7 +146,17 @@ int main() {
     shm->running.store(true);
     shm->reset_requested.store(false);
 
-    position pos = {0.0f, 0.0f};
+    // Build a small deterministic maze for the simulation.
+    srand(12345);
+    const int maze_w = 16;
+    const int maze_h = 16;
+    int *maze_data = (int *)calloc(maze_w * maze_h, sizeof(int));
+    maze_t maze = {maze_data, maze_w, maze_h};
+    carve_maze(&maze);
+    puts("-- Maze layout (bottom/right=#wall, ' ' = open):");
+    print_maze(&maze);
+
+    position pos = {0.1f, 0.1f, 0.0f};
 
     // Use a fixed timestep so that simulation results are deterministic.
     constexpr float kFixedDt = 0.01f; // seconds
@@ -72,12 +178,13 @@ int main() {
                shm->motors.pwm_duty[0], shm->motors.pwm_duty[1], shm->motors.seq);
         shm->motor_ready.store(0); // Acknowledge command read
 
-        calculate_position(shm->motors, pos, dt);
+        calculate_position(shm->motors, pos, dt, &maze);
         printf("Simulated position: x=%.2f, y=%.2f, heading=%.2f degrees\n",
                pos.x, pos.y, pos.heading_deg);
     }
 
 
+    free(maze_data);
     shm_unlink("/tucu_test");
 }
 
